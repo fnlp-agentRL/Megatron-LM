@@ -609,12 +609,13 @@ class GPTModel(LanguageModule):
                     },
                 )
 
-                mtp_loss = loss_mask * mtp_loss
+                safe_num_tokens = torch.clamp_min(num_tokens, 1)
+                mtp_loss = torch.where(loss_mask.bool(), mtp_loss, torch.zeros_like(mtp_loss))
                 if self.training:
                     # TODO(shifangx): remove the use of parallel_state here
                     # after moving loss logging to loss_func in pretrain_gpt.py
                     MTPLossLoggingHelper.save_loss_to_tracker(
-                        torch.sum(mtp_loss) / num_tokens,
+                        torch.sum(mtp_loss) / safe_num_tokens,
                         mtp_layer_number,
                         self.config.mtp_num_layers,
                         avg_group=parallel_state.get_data_parallel_group(
@@ -628,7 +629,7 @@ class GPTModel(LanguageModule):
                     )
                 else:
                     hidden_states = MTPLossAutoScaler.apply(
-                        hidden_states, mtp_loss_scale * mtp_loss / num_tokens
+                        hidden_states, mtp_loss_scale * mtp_loss / safe_num_tokens
                     )
         sequence_parallel_override = False
 
