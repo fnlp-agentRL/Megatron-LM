@@ -654,6 +654,13 @@ def forward_backward_no_pipelining(
                     backward_step(
                         input_tensor, output_tensor, output_tensor_grad, model_type, config
                     )
+                    from megatron.core.transformer.module import (
+                        _debug_force_release_pre_fp32_output_grad,
+                    )
+
+                    _debug_force_release_pre_fp32_output_grad(
+                        f"forward_backward_no_pipelining microbatch={i} after_backward_step"
+                    )
         # Run computation for last microbatch out of context handler (want to
         # synchronize gradients).
         output_tensor, num_tokens = forward_step(
@@ -676,6 +683,11 @@ def forward_backward_no_pipelining(
 
         if not forward_only:
             backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config)
+            from megatron.core.transformer.module import _debug_force_release_pre_fp32_output_grad
+
+            _debug_force_release_pre_fp32_output_grad(
+                f"forward_backward_no_pipelining microbatch={num_microbatches - 1} after_backward_step"
+            )
 
     if config.finalize_model_grads_func is not None and not forward_only:
         # Finalize model grads (perform full grad all-reduce / reduce-scatter for

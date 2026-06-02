@@ -3,6 +3,7 @@
 """Megatron Module."""
 from functools import partial
 from typing import Optional, Tuple
+import weakref
 
 import torch
 from torch.autograd import Variable
@@ -20,6 +21,126 @@ from megatron.core.transformer.utils import (
 _FLOAT_TYPES = (torch.FloatTensor, torch.cuda.FloatTensor)
 _HALF_TYPES = (torch.HalfTensor, torch.cuda.HalfTensor)
 _BF16_TYPES = (torch.BFloat16Tensor, torch.cuda.BFloat16Tensor)
+
+_PRE_FP32_OUTPUT_GRAD_REF = None
+_PRE_FP32_OUTPUT_GRAD_RELEASED = True
+_PRE_FP32_OUTPUT_GRAD_META = None
+
+
+def _debug_rank():
+    try:
+        if torch.distributed.is_initialized():
+            return torch.distributed.get_rank()
+    except Exception:
+        pass
+    return 0
+
+
+def _debug_tensor_logical_nbytes(tensor):
+    return tensor.numel() * tensor.element_size()
+
+
+def _debug_tensor_storage_ptr(tensor):
+    try:
+        return hex(tensor.untyped_storage().data_ptr())
+    except Exception:
+        return "N/A"
+
+
+def _debug_tensor_meta(tensor):
+    logical_nbytes = _debug_tensor_logical_nbytes(tensor)
+    try:
+        storage_nbytes = tensor.untyped_storage().nbytes()
+    except Exception:
+        storage_nbytes = -1
+    return (
+        f"id={id(tensor)} storage_ptr={_debug_tensor_storage_ptr(tensor)} "
+        f"data_ptr={hex(tensor.data_ptr()) if tensor.is_cuda else 'N/A'} "
+        f"logical={logical_nbytes / 1024**3:.2f}GiB "
+        f"storage={storage_nbytes / 1024**3:.2f}GiB "
+        f"shape={tuple(tensor.shape)} stride={tuple(tensor.stride())} "
+        f"dtype={tensor.dtype} device={tensor.device}"
+    )
+
+
+def _debug_capture_pre_fp32_output_grad(output):
+    if not isinstance(output, torch.Tensor) or not output.requires_grad:
+        return
+
+    def _hook(grad):
+        global _PRE_FP32_OUTPUT_GRAD_REF
+        global _PRE_FP32_OUTPUT_GRAD_RELEASED
+        global _PRE_FP32_OUTPUT_GRAD_META
+
+        try:
+            _PRE_FP32_OUTPUT_GRAD_REF = weakref.ref(grad)
+            _PRE_FP32_OUTPUT_GRAD_RELEASED = False
+            _PRE_FP32_OUTPUT_GRAD_META = _debug_tensor_meta(grad)
+            print(
+                f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+                f"event=grad_captured grad={_PRE_FP32_OUTPUT_GRAD_META}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+                f"event=grad_capture_failed error={type(exc).__name__}: {exc}",
+                flush=True,
+            )
+        return None
+
+    try:
+        output.register_hook(_hook)
+        print(
+            f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+            f"event=hook_registered output={_debug_tensor_meta(output)}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+            f"event=hook_register_failed error={type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
+def _debug_force_release_pre_fp32_output_grad(tag):
+    global _PRE_FP32_OUTPUT_GRAD_REF
+    global _PRE_FP32_OUTPUT_GRAD_RELEASED
+    global _PRE_FP32_OUTPUT_GRAD_META
+
+    if _PRE_FP32_OUTPUT_GRAD_REF is None or _PRE_FP32_OUTPUT_GRAD_RELEASED:
+        return
+
+    grad = _PRE_FP32_OUTPUT_GRAD_REF()
+    if grad is None:
+        print(
+            f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+            f"event=already_released tag={tag} recorded_grad={_PRE_FP32_OUTPUT_GRAD_META}",
+            flush=True,
+        )
+        _PRE_FP32_OUTPUT_GRAD_RELEASED = True
+        return
+
+    try:
+        storage = grad.untyped_storage()
+        old_nbytes = storage.nbytes()
+        storage.resize_(0)
+        new_nbytes = storage.nbytes()
+        print(
+            f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+            f"event=forced_release tag={tag} old_nbytes={old_nbytes} "
+            f"new_nbytes={new_nbytes} grad={_PRE_FP32_OUTPUT_GRAD_META}",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"[MEGATRON_LOGITS_GRAD_RELEASE] rank={_debug_rank()} "
+            f"event=forced_release_failed tag={tag} grad={_PRE_FP32_OUTPUT_GRAD_META} "
+            f"error={type(exc).__name__}: {exc}",
+            flush=True,
+        )
+    _PRE_FP32_OUTPUT_GRAD_RELEASED = True
 
 
 def param_is_not_shared(param):  # pylint: disable=missing-function-docstring
@@ -492,6 +613,7 @@ class Float16Module(MegatronModule):
             and is_pp_last_stage(pp_group)
             and fp32_output is True
         ):
+            _debug_capture_pre_fp32_output_grad(outputs)
             outputs = float16_to_fp32(outputs)
         return outputs
 
