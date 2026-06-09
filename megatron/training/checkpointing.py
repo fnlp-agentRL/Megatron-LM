@@ -1416,6 +1416,8 @@ def load_args_from_checkpoint(
     _set_arg('apply_query_key_layer_scaling', force=True)
     _set_arg('attention_dropout', force=True)
     _set_arg('hidden_dropout', force=True)
+    _set_arg('mtp_num_layers', force=True)
+    _set_arg('mtp_use_repeated_layer', force=True)
 
     _set_arg('hybrid_override_pattern', force=True)
     _set_arg('spec', force=True)

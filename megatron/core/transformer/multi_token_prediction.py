@@ -1086,6 +1086,7 @@ class MultiTokenPredictionBlock(MegatronModule):
         self.submodules = _get_mtp_block_submodules(config, spec)
         self.mtp_loss_scaling_factor = config.mtp_loss_scaling_factor
         self.vp_stage = vp_stage
+        self.mtp_use_repeated_layer = self.config.mtp_use_repeated_layer
 
         # Initialize Context Parallelism (CP) support for MTP
         # This enables MTP to work with CP > 1 by providing the CP process group
@@ -1116,12 +1117,23 @@ class MultiTokenPredictionBlock(MegatronModule):
                 )
             return module
 
-        self.layers = torch.nn.ModuleList(
-            [
-                build_layer(layer_spec, i + 1)
-                for i, layer_spec in enumerate(self.submodules.layer_specs)
-            ]
-        )
+        if self.mtp_use_repeated_layer:
+            if len(self.submodules.layer_specs) != 1:
+                warnings.warn(
+                    "Repeated MTP mode expects exactly 1 layer spec, got "
+                    f"{len(self.submodules.layer_specs)} instead. "
+                    f"The first layer will be applied {self.config.mtp_num_layers} times."
+                )
+            self.layers = torch.nn.ModuleList(
+                [build_layer(self.submodules.layer_specs[0], layer_number=1)]
+            )
+        else:
+            self.layers = torch.nn.ModuleList(
+                [
+                    build_layer(layer_spec, i + 1)
+                    for i, layer_spec in enumerate(self.submodules.layer_specs)
+                ]
+            )
 
     def forward(
         self,
@@ -1157,8 +1169,12 @@ class MultiTokenPredictionBlock(MegatronModule):
         offset = get_mtp_layer_offset(self.config, self.vp_stage)
         hidden_states_list = list(torch.chunk(hidden_states, 1 + offset, dim=0))
         hidden_states = hidden_states_list[offset]
-        for layer_number in range(len(self.layers)):
-            (hidden_states, input_ids, position_ids) = self.layers[layer_number](
+        num_iterations = (
+            self.config.mtp_num_layers if self.mtp_use_repeated_layer else len(self.layers)
+        )
+        for iteration in range(num_iterations):
+            layer_idx = 0 if self.mtp_use_repeated_layer else iteration
+            (hidden_states, input_ids, position_ids) = self.layers[layer_idx](
                 input_ids=input_ids,
                 position_ids=position_ids,
                 hidden_states=hidden_states,

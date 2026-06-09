@@ -439,6 +439,16 @@ class TopKRouter(Router):
                 padding tokens. Can be a Python int or a torch.Tensor (typically 0-d tensor).
                 If None, uses activation.shape[0]. Defaults to None.
         """
+        # When using repeated MTP layers, this same MTP router is called once per
+        # prediction depth. Scale auxiliary losses so the shared layer is not
+        # over-regularized by the number of repeated calls.
+        if (
+            self.is_mtp_layer
+            and self.config.mtp_use_repeated_layer
+            and self.config.mtp_num_layers is not None
+        ):
+            aux_loss = aux_loss / self.config.mtp_num_layers
+
         # TODO (zijiey): fix the per_layer_logging for MTP, currently it will incorrectly
         # add the aux loss logging value to other layer's since it is difficult to get the
         # correct layer_number for MTP. It does not affect the correctness of the calculation
@@ -486,6 +496,12 @@ class TopKRouter(Router):
             # Skip Z loss calculations when using torch.no_grad() or checkpointing.
             moe_z_loss_coeff = self.config.moe_z_loss_coeff / self.tp_cp_group.size()
             z_loss = z_loss_func(logits, moe_z_loss_coeff, padding_mask=padding_mask)
+            if (
+                self.is_mtp_layer
+                and self.config.mtp_use_repeated_layer
+                and self.config.mtp_num_layers is not None
+            ):
+                z_loss = z_loss / self.config.mtp_num_layers
             if self.calculate_per_token_loss:
                 # The expected final scaling for z_loss gradients is
                 # 1/(num_micro_batches * dp_size).
