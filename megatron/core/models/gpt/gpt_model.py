@@ -758,11 +758,13 @@ class GPTModel(LanguageModule):
                     mtp_loss = self.compute_language_model_loss(mtp_labels, mtp_logits)
 
                 mtp_loss = loss_mask * mtp_loss
+                # Avoid NaNs when a rolled MTP mask has no supervised tokens.
+                num_tokens_for_loss = torch.clamp(num_tokens, min=1)
                 if self.training:
                     # TODO(shifangx): remove the use of parallel_state here
                     # after moving loss logging to loss_func in pretrain_gpt.py
                     MTPLossLoggingHelper.save_loss_to_tracker(
-                        torch.sum(mtp_loss) / num_tokens,
+                        torch.sum(mtp_loss) / num_tokens_for_loss,
                         mtp_layer_number,
                         self.config.mtp_num_layers,
                         avg_group=parallel_state.get_data_parallel_group(
@@ -776,7 +778,7 @@ class GPTModel(LanguageModule):
                     )
                 else:
                     hidden_states = MTPLossAutoScaler.apply(
-                        hidden_states, mtp_loss_scale * mtp_loss / num_tokens
+                        hidden_states, mtp_loss_scale * mtp_loss / num_tokens_for_loss
                     )
         sequence_parallel_override = False
 
