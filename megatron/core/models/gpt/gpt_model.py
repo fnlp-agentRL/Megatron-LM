@@ -704,15 +704,15 @@ class GPTModel(LanguageModule):
             if loss_mask is None:
                 # if loss_mask is not provided, use all ones as loss_mask
                 loss_mask = torch.ones_like(mtp_labels)
-            else:
-                # Otherwise, roll the loss_mask to keep up with the mtp_labels
-                loss_mask, _ = roll_tensor(
-                    loss_mask,
-                    shifts=-1,
-                    dims=-1,
-                    cp_group=self.cp_group,
-                    packed_seq_params=packed_seq_params,
-                )
+            # else:
+            #     # Otherwise, roll the loss_mask to keep up with the mtp_labels
+            #     loss_mask, _ = roll_tensor(
+            #         loss_mask,
+            #         shifts=-1,
+            #         dims=-1,
+            #         cp_group=self.cp_group,
+            #         packed_seq_params=packed_seq_params,
+            #     )
             for mtp_layer_number in range(self.config.mtp_num_layers):
                 # Calc loss for the current Multi-Token Prediction (MTP) layers.
                 mtp_labels, _ = roll_tensor(
