@@ -112,6 +112,7 @@ dev = [
     "orjson",
     "fast-hadamard-transform",
     "zstandard",
+    "deep-ep",
 ]
 
 ### 'lts' extra is deprecated                                                   ###
@@ -184,6 +185,7 @@ no-build-isolation-package = [
     "transformer-engine",
     "transformer-engine-torch",
     "fast-hadamard-transform",
+    "deep-ep",
 ]
 link-mode = "copy"
 # We don't define override-dependencies globally but rather locally where we need it.
@@ -232,6 +234,7 @@ nemo-run = { git = "https://github.com/NVIDIA-NeMo/Run.git", rev = "17ae86b64d7f
 emerging_optimizers = { git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git", rev = "v0.2.0" }
 fast-hadamard-transform = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git", rev = "f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" }
 mamba-ssm = { git = "https://github.com/state-spaces/mamba.git", rev = "0048fbf2e7b2f214dcbe703ea3dec2b9647595e1" }
+deep_ep = { git = "https://github.com/deepseek-ai/DeepEP", rev = "v1.2.1" }
 
 [tool.isort]
 profile = "black"                                                          # black-compatible
